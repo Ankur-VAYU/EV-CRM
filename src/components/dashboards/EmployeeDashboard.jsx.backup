@@ -1,0 +1,367 @@
+import React from 'react'
+import { useStore } from '../../store'
+import {
+    Users,
+    ShoppingCart,
+    Clock,
+    Zap,
+    CheckCircle,
+    Calendar,
+    Phone,
+    MapPin,
+    Camera,
+    X
+} from 'lucide-react'
+
+function EmployeeDashboard() {
+    const { user, leads, sales, inventory, clockIn, clockOut, fetchAttendance, attendance } = useStore()
+    const [status, setStatus] = React.useState('checked-out') // checked-in, checked-out
+    const [attendanceId, setAttendanceId] = React.useState(null)
+    const [lastActionTime, setLastActionTime] = React.useState(null)
+    const [showCamera, setShowCamera] = React.useState(false)
+    const [capturedImage, setCapturedImage] = React.useState(null)
+    const [isLoading, setIsLoading] = React.useState(false)
+    const videoRef = React.useRef(null)
+    const canvasRef = React.useRef(null)
+
+    // Check attendance status on mount and set up auto-logout
+    React.useEffect(() => {
+        const checkAttendanceStatus = async () => {
+            const today = new Date().toISOString().split('T')[0]
+            await fetchAttendance(today)
+
+            // Find today's attendance for this user
+            const todayAttendance = attendance.find(a =>
+                a.employee_id === (user.id || 1) &&
+                a.date === today &&
+                !a.clock_out
+            )
+
+            if (todayAttendance) {
+                setStatus('checked-in')
+                setLastActionTime(new Date(todayAttendance.clock_in).toLocaleTimeString())
+                setAttendanceId(todayAttendance.id)
+            }
+        }
+
+        checkAttendanceStatus()
+
+        // Auto-logout at 8 PM
+        const checkAutoLogout = () => {
+            const now = new Date()
+            const hours = now.getHours()
+
+            // If it's 8 PM or later and user is checked in
+            if (hours >= 20 && status === 'checked-in') {
+                alert('Auto-logout: It is 8:00 PM. You are being automatically logged out.')
+                handleAutoLogout()
+            }
+        }
+
+        const interval = setInterval(checkAutoLogout, 60000) // Check every minute
+
+        return () => clearInterval(interval)
+    }, [user.id, fetchAttendance, status, attendance])
+
+    const handleAutoLogout = async () => {
+        try {
+            const employeeId = user.id || 1
+            const res = await clockOut(employeeId, null, null) // No photo/location for auto-logout
+            if (res.success) {
+                setStatus('checked-out')
+                setLastActionTime(new Date(res.clock_out).toLocaleTimeString())
+            }
+        } catch (error) {
+            console.error('Auto-logout failed:', error)
+        }
+    }
+
+    const startCamera = async () => {
+        setShowCamera(true)
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ video: true })
+            if (videoRef.current) {
+                videoRef.current.srcObject = stream
+            }
+        } catch (err) {
+            console.error("Error accessing camera", err)
+            alert("Unable to access camera. Please allow permission.")
+            setShowCamera(false)
+        }
+    }
+
+    const capturePhoto = () => {
+        const video = videoRef.current
+        const canvas = canvasRef.current
+        if (video && canvas) {
+            const context = canvas.getContext('2d')
+            context.drawImage(video, 0, 0, canvas.width, canvas.height)
+            const imageData = canvas.toDataURL('image/jpeg')
+            setCapturedImage(imageData)
+
+            // Stop stream
+            const stream = video.srcObject
+            const tracks = stream.getTracks()
+            tracks.forEach(track => track.stop())
+        }
+    }
+
+    const getLocation = () => {
+        return new Promise((resolve, reject) => {
+            if (!navigator.geolocation) {
+                reject("Geolocation is not supported")
+            } else {
+                navigator.geolocation.getCurrentPosition(
+                    (position) => {
+                        resolve(`${position.coords.latitude},${position.coords.longitude}`)
+                    },
+                    (error) => {
+                        console.error("Geo error", error)
+                        resolve(null) // Continue even if location fails, optional
+                    }
+                )
+            }
+        })
+    }
+
+    const submitAttendance = async () => {
+        setIsLoading(true)
+        try {
+            const location = await getLocation()
+            const employeeId = user.id || 1
+
+            if (status === 'checked-out') {
+                const res = await clockIn(employeeId, capturedImage, location)
+                if (res.success) {
+                    setStatus('checked-in')
+                    setLastActionTime(new Date(res.clock_in).toLocaleTimeString())
+                    setAttendanceId(res.id)
+                }
+            } else {
+                const res = await clockOut(employeeId, capturedImage, location)
+                if (res.success) {
+                    setStatus('checked-out')
+                    setLastActionTime(new Date(res.clock_out).toLocaleTimeString())
+                }
+            }
+            setShowCamera(false)
+            setCapturedImage(null)
+        } catch (error) {
+            console.error(error)
+        } finally {
+            setIsLoading(false)
+        }
+    }
+
+    // Direct handler for button click
+    const handleAttendanceClick = () => {
+        if (!showCamera) {
+            startCamera()
+        }
+    }
+
+    // Filter data for current employee
+    const myLeads = leads.filter(l => l.assigned_to === user.email || l.assigned_to === user.name)
+    const myActiveLeads = myLeads.filter(l => l.status === 'new' || l.status === 'contacted')
+
+    // Sales where employee collected payment (Cash or DP)
+    const mySales = sales.filter(s => s.cash_collected_by === user.email || s.finance_dp_cash_by === user.email)
+
+    // Calculate conversion rate
+    const conversionRate = myLeads.length > 0
+        ? ((mySales.length / myLeads.length) * 100).toFixed(1)
+        : 0
+
+    return (
+        <div className="space-y-8 animate-in fade-in duration-500">
+            <div className="flex justify-between items-end">
+                <div>
+                    <h2 className="text-2xl font-black text-gray-900 font-sans tracking-tight">Employee Hub</h2>
+                    <p className="text-gray-500 font-medium">Welcome back, {user.name}</p>
+                </div>
+                <div className="flex gap-4 items-center">
+                    {/* Attendance Clock In/Out */}
+                    <div className="flex items-center gap-3 bg-white p-2 rounded-xl border border-gray-100 shadow-sm">
+                        <div className="text-right mr-2 hidden md:block">
+                            <p className="text-[9px] font-black uppercase tracking-widest text-gray-400">Attendance</p>
+                            {status === 'checked-in' && (
+                                <div className="flex items-center gap-1 mt-1">
+                                    <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+                                    <p className="text-[10px] font-bold text-green-600">ACTIVE</p>
+                                </div>
+                            )}
+                            {lastActionTime && <p className="text-[10px] font-bold text-gray-700">Last: {lastActionTime}</p>}
+                        </div>
+                        <button
+                            onClick={handleAttendanceClick}
+                            disabled={isLoading}
+                            className={`flex items-center gap-2 px-6 py-3 rounded-xl text-[10px] font-black uppercase transition-all shadow-lg active:scale-95 ${status === 'checked-in' ? 'bg-red-500 text-white hover:bg-red-600' : 'bg-vayu-green text-white hover:bg-emerald-800'}`}
+                        >
+                            <Clock size={16} className={status === 'checked-in' ? 'animate-pulse' : ''} />
+                            {status === 'checked-in' ? 'Clock Out' : 'Clock In'}
+                        </button>
+                    </div>
+
+                    {showCamera && (
+                        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+                            <div className="bg-white rounded-3xl p-6 w-full max-w-md relative overflow-hidden">
+                                <button
+                                    onClick={() => { setShowCamera(false); setCapturedImage(null) }}
+                                    className="absolute top-4 right-4 z-10 bg-white/20 p-2 rounded-full hover:bg-white/40"
+                                >
+                                    <X size={20} className="text-black" />
+                                </button>
+
+                                <h3 className="text-xl font-black mb-4 text-center uppercase tracking-tight">
+                                    {status === 'checked-out' ? 'Clock In Verification' : 'Clock Out Verification'}
+                                </h3>
+
+                                <div className="rounded-2xl overflow-hidden bg-black aspect-square relative mb-6 border-4 border-gray-100 shadow-inner">
+                                    {!capturedImage ? (
+                                        <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover"></video>
+                                    ) : (
+                                        <img src={capturedImage} alt="Captured" className="w-full h-full object-cover" />
+                                    )}
+                                    <canvas ref={canvasRef} width={640} height={480} className="hidden"></canvas>
+                                </div>
+
+                                <div className="space-y-3">
+                                    {!capturedImage ? (
+                                        <button
+                                            onClick={capturePhoto}
+                                            className="w-full py-4 bg-black text-white rounded-2xl font-black uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-gray-900"
+                                        >
+                                            <Camera size={20} /> Capture Photo
+                                        </button>
+                                    ) : (
+                                        <div className="grid grid-cols-2 gap-3">
+                                            <button
+                                                onClick={() => setCapturedImage(null)}
+                                                className="py-4 bg-gray-100 text-gray-900 rounded-2xl font-black uppercase tracking-widest hover:bg-gray-200"
+                                            >
+                                                Retake
+                                            </button>
+                                            <button
+                                                onClick={submitAttendance}
+                                                disabled={isLoading}
+                                                className={`py-4 text-white rounded-2xl font-black uppercase tracking-widest flex items-center justify-center gap-2 ${isLoading ? 'bg-gray-400' : 'bg-vayu-green hover:bg-emerald-800'}`}
+                                            >
+                                                {isLoading ? 'Processing...' : 'Confirm'}
+                                            </button>
+                                        </div>
+                                    )}
+                                </div>
+                                <p className="text-center text-[10px] text-gray-400 font-bold uppercase mt-4 tracking-widest">
+                                    Location will be captured automatically
+                                </p>
+                            </div>
+                        </div>
+                    )}
+
+                    <div className="bg-black/5 px-4 py-2 rounded-xl">
+                        <p className="text-[10px] font-black uppercase text-gray-400">Current Role</p>
+                        <p className="font-bold text-gray-900 flex items-center gap-2"><Zap size={14} className="text-vayu-yellow" /> {user.role}</p>
+                    </div>
+                </div>
+            </div>
+
+            {/* Quick Stats */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="bg-white p-6 rounded-[2rem] border border-gray-100 shadow-sm relative overflow-hidden group hover:shadow-md transition-all">
+                    <div className="absolute top-0 right-0 w-24 h-24 bg-indigo-50 -mr-8 -mt-8 rounded-full blur-3xl opacity-50"></div>
+                    <div className="relative z-10">
+                        <div className="flex justify-between items-start mb-4">
+                            <div className="p-3 bg-indigo-50 text-indigo-600 rounded-xl"><Users size={20} /></div>
+                            <span className="text-xs font-black uppercase bg-indigo-100 text-indigo-700 px-2 py-1 rounded-full">{myLeads.length} Total</span>
+                        </div>
+                        <h3 className="text-3xl font-black text-gray-900">{myActiveLeads.length}</h3>
+                        <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mt-1">Active Leads Assigned</p>
+                    </div>
+                </div>
+
+                <div className="bg-white p-6 rounded-[2rem] border border-gray-100 shadow-sm relative overflow-hidden group hover:shadow-md transition-all">
+                    <div className="absolute top-0 right-0 w-24 h-24 bg-emerald-50 -mr-8 -mt-8 rounded-full blur-3xl opacity-50"></div>
+                    <div className="relative z-10">
+                        <div className="flex justify-between items-start mb-4">
+                            <div className="p-3 bg-emerald-50 text-emerald-600 rounded-xl"><ShoppingCart size={20} /></div>
+                            <span className="text-xs font-black uppercase bg-emerald-100 text-emerald-700 px-2 py-1 rounded-full">{conversionRate}% Conv.</span>
+                        </div>
+                        <h3 className="text-3xl font-black text-gray-900">{mySales.length}</h3>
+                        <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mt-1">Total Sales Closed</p>
+                    </div>
+                </div>
+
+                <div className="bg-white p-6 rounded-[2rem] border border-gray-100 shadow-sm relative overflow-hidden group hover:shadow-md transition-all">
+                    <div className="absolute top-0 right-0 w-24 h-24 bg-orange-50 -mr-8 -mt-8 rounded-full blur-3xl opacity-50"></div>
+                    <div className="relative z-10">
+                        <div className="flex justify-between items-start mb-4">
+                            <div className="p-3 bg-orange-50 text-orange-600 rounded-xl"><Clock size={20} /></div>
+                        </div>
+                        <h3 className="text-3xl font-black text-gray-900">
+                            {myActiveLeads.filter(l => new Date(l.next_call_date).toLocaleDateString() === new Date().toLocaleDateString()).length}
+                        </h3>
+                        <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mt-1">Follow-ups Due Today</p>
+                    </div>
+                </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                {/* My Active Leads List */}
+                <div className="lg:col-span-2 bg-white p-8 rounded-[2rem] border border-gray-50 shadow-sm">
+                    <h3 className="text-lg font-black text-gray-900 mb-6 flex items-center gap-2"><Phone size={20} className="text-gray-400" /> High Priority Follow-ups</h3>
+                    <div className="space-y-4">
+                        {myActiveLeads.slice(0, 5).map(lead => (
+                            <div key={lead.id} className="flex items-center justify-between p-4 bg-gray-50 rounded-2xl group hover:bg-white hover:shadow-sm transition-all border border-transparent hover:border-gray-100">
+                                <div className="flex items-center gap-4">
+                                    <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center font-bold text-gray-400 group-hover:text-vayu-green">{lead.name[0]}</div>
+                                    <div>
+                                        <p className="font-bold text-gray-900 text-sm">{lead.name}</p>
+                                        <p className="text-[10px] text-gray-400 font-bold uppercase tracking-tight flex items-center gap-1"><MapPin size={8} /> {lead.showroom}</p>
+                                    </div>
+                                </div>
+                                <div className="text-right">
+                                    <span className={`px-3 py-1 rounded-full text-[9px] font-black uppercase mb-1 inline-block ${lead.status === 'new' ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700'}`}>{lead.status}</span>
+                                    <p className="text-[9px] text-gray-400 font-bold">Call: {new Date(lead.next_call_date).toLocaleDateString()}</p>
+                                </div>
+                            </div>
+                        ))}
+                        {myActiveLeads.length === 0 && (
+                            <div className="text-center py-12 text-gray-400 text-sm italic">
+                                No active leads assigned to you.
+                            </div>
+                        )}
+                    </div>
+                </div>
+
+                {/* Quick Actions / Inventory Status */}
+                <div className="space-y-6">
+                    <div className="bg-black text-white p-8 rounded-[2rem] relative overflow-hidden">
+                        <div className="absolute top-0 right-0 w-32 h-32 bg-vayu-green opacity-20 rounded-full blur-3xl -mr-10 -mt-10"></div>
+                        <h3 className="text-lg font-black mb-2 relative z-10">Start Your Day</h3>
+                        <p className="text-gray-400 text-sm mb-6 relative z-10">Review today's schedule and check inventory levels before calling leads.</p>
+                        <button className="w-full py-3 bg-white text-black font-black rounded-xl hover:bg-gray-100 transition-colors text-xs uppercase tracking-wider relative z-10">
+                            View Full Schedule
+                        </button>
+                    </div>
+
+                    <div className="bg-white p-6 rounded-[2rem] border border-gray-50 shadow-sm">
+                        <h3 className="text-sm font-black text-gray-900 mb-4 uppercase tracking-wider">Low Stock Alerts</h3>
+                        <div className="space-y-3">
+                            {inventory.filter(i => i.quantity <= i.reorder_level).slice(0, 3).map(item => (
+                                <div key={item.id} className="flex justify-between items-center p-3 bg-red-50 rounded-xl border border-red-100">
+                                    <span className="text-xs font-bold text-red-800">{item.item_name}</span>
+                                    <span className="text-xs font-black bg-white px-2 py-1 rounded-lg text-red-600">{item.quantity} left</span>
+                                </div>
+                            ))}
+                            {inventory.filter(i => i.quantity <= i.reorder_level).length === 0 && (
+                                <p className="text-xs text-green-600 font-bold flex items-center gap-1"><CheckCircle size={12} /> Inventory Healthy</p>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    )
+}
+
+export default EmployeeDashboard
