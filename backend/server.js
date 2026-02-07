@@ -20,10 +20,17 @@ const ROLE_PERMISSIONS = {
     technician: ['view_service_tasks', 'update_service_status']
 };
 
-console.log('Starting VAYU Backend Server...');
-
-// Database setup
+const supabase = require('./supabaseClient');
 const db = new Database(path.join(__dirname, 'vayu.db'));
+
+// Middleware to choose between Supabase and SQLite
+const useSupabase = process.env.SUPABASE_URL && !process.env.SUPABASE_URL.includes('your_supabase_url_here');
+
+if (useSupabase) {
+    console.log('🚀 Using Cloud Database (Supabase)');
+} else {
+    console.log('📦 Using Local Database (SQLite)');
+}
 
 // Initialize tables
 db.exec(`
