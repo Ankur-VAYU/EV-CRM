@@ -1,14 +1,13 @@
 services:
   - type: web
-    name: vayu-backend
-    env: node
+    name: vayu-backend-service
+    runtime: node
+    repo: https://github.com/Ankur-VAYU/EV-CRM
     rootDir: backend
-    buildCommand: "npm install"
-    startCommand: "node server.js"
+    buildCommand: npm install
+    startCommand: node server.js
     envVars:
       - key: SUPABASE_URL
-        value: "https://kfekjtokxidyohchsinc.supabase.co"
+        value: https://kfekjtokxidyohchsinc.supabase.co
       - key: SUPABASE_KEY
-        value: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtmZWtqdG9reGlkeW9oY2hzaW5jIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA0NTI0NTAsImV4cCI6MjA4NjAyODQ1MH0.1GF90cX5LdDgk6nJZyFNNXoPBonwW3UyAageGG5jmXg"
-      - key: PORT
-        value: "10000"
+        value: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtmZWtqdG9reGlkeW9oY2hzaW5jIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA0NTI0NTAsImV4cCI6MjA4NjAyODQ1MH0.1GF90cX5LdDgk6nJZyFNNXoPBonwW3UyAageGG5jmXg
