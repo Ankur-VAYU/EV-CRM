@@ -22,6 +22,110 @@ export const useStore = create((set, get) => ({
     inventory: [],
     serviceRecords: [],
     rsaTracking: [],
+    pendingSales: [],
+    tasks: [],
+    notifications: [],
+
+    fetchNotifications: async (email) => {
+        if (!email) return;
+        try {
+            const res = await fetch(`${API_URL}/notifications?email=${encodeURIComponent(email)}`);
+            if (res.ok) {
+                const data = await res.json();
+                set({ notifications: data });
+            }
+        } catch (error) {
+            console.error('Failed to fetch notifications:', error);
+        }
+    },
+
+    markNotificationRead: async (id) => {
+        try {
+            const res = await fetch(`${API_URL}/notifications/${id}/read`, { method: 'PUT' });
+            if (res.ok) {
+                set(state => ({
+                    notifications: state.notifications.map(n => n.id === id ? { ...n, is_read: 1 } : n)
+                }));
+            }
+        } catch (error) {
+            console.error('Failed to mark notification as read:', error);
+        }
+    },
+
+    fetchTasks: async () => {
+        try {
+            const res = await fetch(`${API_URL}/tasks`);
+            if (res.ok) {
+                const data = await res.json();
+                set({ tasks: data });
+            }
+        } catch (error) {
+            console.error('Failed to fetch tasks:', error);
+        }
+    },
+
+    addTask: async (taskData) => {
+        try {
+            const res = await fetch(`${API_URL}/tasks`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(taskData)
+            });
+            if (res.ok) {
+                const data = await res.json();
+                set(state => ({ tasks: [data, ...state.tasks] }));
+                return true;
+            }
+            return false;
+        } catch (error) {
+            console.error('Failed to add task:', error);
+            return false;
+        }
+    },
+
+    updateTask: async (id, updateData) => {
+        try {
+            const res = await fetch(`${API_URL}/tasks/${id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(updateData)
+            });
+            if (res.ok) {
+                get().fetchTasks();
+                return true;
+            }
+            return false;
+        } catch (error) {
+            console.error('Failed to update task:', error);
+            return false;
+        }
+    },
+
+    deleteTask: async (id) => {
+        try {
+            const res = await fetch(`${API_URL}/tasks/${id}`, { method: 'DELETE' });
+            if (res.ok) {
+                set(state => ({ tasks: state.tasks.filter(t => t.id !== id) }));
+                return true;
+            }
+            return false;
+        } catch (error) {
+            console.error('Failed to delete task:', error);
+            return false;
+        }
+    },
+
+    fetchPendingSales: async () => {
+        try {
+            const res = await fetch(`${API_URL}/pending-sales`);
+            if (res.ok) {
+                const data = await res.json();
+                set({ pendingSales: data });
+            }
+        } catch (error) {
+            console.error('Failed to fetch pending sales:', error);
+        }
+    },
 
     fetchAttendance: async (date) => {
         try {
@@ -49,6 +153,7 @@ export const useStore = create((set, get) => ({
             }
             return { success: false, error: data.error };
         } catch (error) {
+            console.error(error);
             return { success: false, error: 'Network Error' };
         }
     },
@@ -67,6 +172,7 @@ export const useStore = create((set, get) => ({
             }
             return { success: false, error: data.error };
         } catch (error) {
+            console.error(error);
             return { success: false, error: 'Network Error' };
         }
     },
@@ -272,6 +378,9 @@ export const useStore = create((set, get) => ({
         get().fetchPayments();
         get().fetchShowrooms();
         get().fetchExpenses();
+        get().fetchPendingSales();
+        get().fetchTasks();
+        get().fetchNotifications(user.email);
     },
 
     logout: () => {
@@ -410,7 +519,6 @@ export const useStore = create((set, get) => ({
     },
 
     // Data State
-    leads: [],
     leadNotes: {},
 
     fetchLeads: async () => {
@@ -550,15 +658,52 @@ export const useStore = create((set, get) => ({
 
     convertLeadToSale: async (leadId, saleData) => {
         try {
+            const user = get().user;
+            const res = await fetch(`${API_URL}/pending-sales`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    lead_id: leadId,
+                    sale_data: saleData,
+                    submitted_by: user ? (user.name || user.email) : 'Unknown'
+                })
+            });
+
+            if (res.ok) {
+                set(state => ({
+                    leads: state.leads.map(l => l.id === leadId ? { ...l, status: 'pending_approval', stage: 'Pending Approval' } : l)
+                }));
+                get().fetchPendingSales();
+                return true;
+            }
+            return false;
+        } catch (error) {
+            console.error('Failed to submit pending sale:', error);
+            return false;
+        }
+    },
+
+    approveSale: async (pendingId, saleData, leadId) => {
+        try {
+            const user = get().user;
+
+            const approveRes = await fetch(`${API_URL}/pending-sales/${pendingId}/approve`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ admin_name: user?.name })
+            });
+
+            if (!approveRes.ok) return false;
+
             // 1. Create Sale
-            const saleRes = await fetch(`${API_URL}/sales`, {
+            await fetch(`${API_URL}/sales`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(saleData)
             });
 
             // 2. Create Customer Profile
-            const customerRes = await fetch(`${API_URL}/customers`, {
+            await fetch(`${API_URL}/customers`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -568,45 +713,47 @@ export const useStore = create((set, get) => ({
                     purchase_date: new Date().toISOString().split('T')[0],
                     uptime_pass_status: saleData.uptime_pass ? 'active' : 'inactive',
                     showroom: saleData.showroom || 'Main Showroom',
-                    // New Fields
                     aadhar_number: saleData.aadhar_number,
                     address: saleData.address,
                     alt_phone: saleData.alt_phone
                 })
             });
 
-            if (saleRes.ok && customerRes.ok) {
-                const newSale = await saleRes.json();
-                const newCustomer = await customerRes.json();
+            // 3. Update Lead Status to 'converted' & Stage to 'Sold'
+            await fetch(`${API_URL}/leads/${leadId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ status: 'converted', stage: 'Sold' })
+            });
 
-                set(state => ({
-                    sales: [newSale, ...state.sales],
-                    customers: [newCustomer, ...state.customers]
-                }));
+            get().fetchPendingSales();
+            get().fetchSales();
+            get().fetchCustomers();
+            get().fetchInventory();
+            get().fetchLeads();
+            return true;
+        } catch (error) {
+            console.error('Failed to approve sale:', error);
+            return false;
+        }
+    },
 
-                // 3. Update Lead Status to 'converted' & Stage to 'Sold'
-                await fetch(`${API_URL}/leads/${leadId}`, {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ status: 'converted', stage: 'Sold' })
-                });
-
-                set(state => ({
-                    leads: state.leads.map(l => l.id === leadId ? { ...l, status: 'converted', stage: 'Sold' } : l)
-                }));
-
-                // 4. Refresh all affected data to show updated inventory and complete details
-                await Promise.all([
-                    get().fetchSales(),
-                    get().fetchCustomers(),
-                    get().fetchInventory()
-                ]);
-
+    rejectSale: async (pendingId) => {
+        try {
+            const user = get().user;
+            const res = await fetch(`${API_URL}/pending-sales/${pendingId}/reject`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ admin_name: user?.name })
+            });
+            if (res.ok) {
+                get().fetchPendingSales();
+                get().fetchLeads();
                 return true;
             }
             return false;
         } catch (error) {
-            console.error('Failed to convert lead:', error);
+            console.error('Failed to reject sale:', error);
             return false;
         }
     },
@@ -647,7 +794,6 @@ export const useStore = create((set, get) => ({
             return { success: false };
         }
     },
-    referrals: [],
     payments: [],
     expenses: [],
 
@@ -904,45 +1050,6 @@ export const useStore = create((set, get) => ({
         }
     },
 
-    // Initialization
-    init: async () => {
-        try {
-            const user = get().user;
-            const query = user ? `?email=${encodeURIComponent(user.email)}&role=${encodeURIComponent(user.role)}` : '';
-
-            const [leads, sales, inventory, customers, serviceRecords, rsa, showroomList, accounts, payments, expenses, employees] = await Promise.all([
-                fetch(`${API_URL}/leads${query}`).then(res => res.json()),
-                fetch(`${API_URL}/sales`).then(res => res.json()),
-                fetch(`${API_URL}/inventory`).then(res => res.json()),
-                fetch(`${API_URL}/customers`).then(res => res.json()),
-                fetch(`${API_URL}/service-records`).then(res => res.json()),
-                fetch(`${API_URL}/rsa`).then(res => res.json()),
-                fetch(`${API_URL}/showrooms`).then(res => res.json()),
-                fetch(`${API_URL}/accounts`).then(res => res.json()),
-                fetch(`${API_URL}/payments`).then(res => res.json()),
-                fetch(`${API_URL}/expenses`).then(res => res.json()),
-                fetch(`${API_URL}/employees`).then(res => res.json())
-            ]);
-
-            set({
-                leads,
-                sales,
-                inventory,
-                customers,
-                serviceRecords,
-                rsaTracking: rsa,
-                showrooms: showroomList,
-                accounts,
-                payments,
-                expenses,
-                employees,
-                referrals: await fetch(`${API_URL}/referrals`).then(res => res.json())
-            });
-        } catch (error) {
-            console.error('Failed to initialize data:', error);
-        }
-    },
-
 
 
     downloadBackup: async () => {
@@ -1131,24 +1238,26 @@ export const useStore = create((set, get) => ({
                 case 'serviceRevenue':
                     value = state.serviceRecords.filter(s => filter(s.service_date, s.showroom) && s.status === 'CLOSED').reduce((sum, s) => sum + (Number(s.total_charge) || 0), 0);
                     break;
-                case 'avgResponseTime':
+                case 'avgResponseTime': {
                     const rsa = state.rsaTracking.filter(r => filter(r.dispatch_time, r.showroom) && r.status === 'completed');
                     value = rsa.length > 0 ? Math.round(rsa.reduce((sum, r) => {
                         if (!r.dispatch_time || !r.arrival_time) return sum;
                         return sum + ((new Date(r.arrival_time) - new Date(r.dispatch_time)) / 60000);
                     }, 0) / rsa.length) : 0;
                     break;
+                }
                 case 'rsaVolume':
                     value = state.rsaTracking.filter(r => filter(r.dispatch_time, r.showroom) && r.status === 'completed').length;
                     break;
                 case 'leadsVolume':
                     value = state.leads.filter(l => filter(l.created_at, l.showroom)).length;
                     break;
-                case 'conversionRate':
+                case 'conversionRate': {
                     const dailyLeads = state.leads.filter(l => filter(l.created_at, l.showroom));
                     const converted = dailyLeads.filter(l => l.status === 'converted').length;
                     value = dailyLeads.length > 0 ? parseFloat(((converted / dailyLeads.length) * 100).toFixed(1)) : 0;
                     break;
+                }
             }
 
             return {

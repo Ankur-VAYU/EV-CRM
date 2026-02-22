@@ -97,7 +97,7 @@ function DuplicateWarningModal({ data, onClose }) {
 }
 
 function LeadManagement() {
-    const { user, leads, addLead, updateLeadStatus, convertLeadToSale, showrooms, accounts, updateLeadDetails, leadNotes, fetchLeadNotes, bulkAssignLeads, bulkDeleteLeads, inventory, fetchLeads } = useStore()
+    const { user, leads, addLead, updateLeadStatus, convertLeadToSale, showrooms, accounts, updateLeadDetails, leadNotes, fetchLeadNotes, bulkAssignLeads, bulkDeleteLeads, inventory, fetchLeads, pendingSales, approveSale, rejectSale } = useStore()
     const isAdmin = ['admin', 'super_admin'].includes(user?.role)
     const [showForm, setShowForm] = useState(false)
     const [editId, setEditId] = useState(null)
@@ -536,6 +536,48 @@ function LeadManagement() {
                     </button>
                 </div>
             </div>
+
+            {isAdmin && pendingSales && pendingSales.length > 0 && (
+                <div className="bg-amber-50 border border-amber-200 rounded-xl p-6 shadow-sm mb-6">
+                    <h3 className="font-bold text-amber-900 text-lg mb-4 flex items-center gap-2">
+                        <Clock className="text-amber-600" size={20} />
+                        Pending Sale Approvals ({pendingSales.length})
+                    </h3>
+                    <div className="space-y-4">
+                        {pendingSales.map(ps => (
+                            <div key={ps.id} className="bg-white rounded-xl p-4 border border-amber-100 flex items-center justify-between">
+                                <div>
+                                    <p className="font-bold text-gray-900">{ps.lead_name} <span className="text-sm font-normal text-gray-500">({ps.lead_phone})</span></p>
+                                    <p className="text-xs text-gray-500 mt-1">Vehicle: <span className="font-bold text-black">{ps.sale_data?.vehicle_inventory_sku}</span> | Price: <span className="font-bold text-green-600">₹{ps.sale_data?.selling_price}</span></p>
+                                    <p className="text-[10px] text-gray-400 mt-1">Submitted by: {ps.submitted_by} on {new Date(ps.created_at).toLocaleString()}</p>
+                                </div>
+                                <div className="flex gap-2">
+                                    <button
+                                        onClick={async () => {
+                                            if (confirm(`Approve sale for ${ps.lead_name}?`)) {
+                                                await approveSale(ps.id, ps.sale_data, ps.lead_id);
+                                            }
+                                        }}
+                                        className="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-xl text-sm font-bold transition-all shadow-sm"
+                                    >
+                                        Approve
+                                    </button>
+                                    <button
+                                        onClick={async () => {
+                                            if (confirm(`Reject sale for ${ps.lead_name}?`)) {
+                                                await rejectSale(ps.id);
+                                            }
+                                        }}
+                                        className="bg-red-50 hover:bg-red-100 text-red-600 px-4 py-2 rounded-xl text-sm font-bold transition-all"
+                                    >
+                                        Reject
+                                    </button>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
 
             {showForm && (
                 <div className="bg-white rounded-xl border border-gray-100 p-6 shadow-sm">

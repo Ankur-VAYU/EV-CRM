@@ -44,12 +44,13 @@ function AdminDashboard() {
             case 'today':
                 start.setHours(0, 0, 0, 0)
                 break
-            case 'this_week':
+            case 'this_week': {
                 const day = now.getDay()
                 const diff = now.getDate() - day + (day === 0 ? -6 : 1)
                 start.setDate(diff)
                 start.setHours(0, 0, 0, 0)
                 break
+            }
             case 'this_month':
                 start.setDate(1)
                 start.setHours(0, 0, 0, 0)

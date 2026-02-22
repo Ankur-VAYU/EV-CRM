@@ -10,13 +10,14 @@ import {
     Phone,
     MapPin,
     Camera,
-    X
+    X,
+    CheckSquare,
+    Plus
 } from 'lucide-react'
 
 function EmployeeDashboard() {
-    const { user, leads, sales, inventory, clockIn, clockOut, fetchAttendance, attendance } = useStore()
+    const { user, leads, sales, inventory, clockIn, clockOut, fetchAttendance, attendance, tasks, updateTask, addTask, accounts } = useStore()
     const [status, setStatus] = React.useState('checked-out') // checked-in, checked-out
-    const [attendanceId, setAttendanceId] = React.useState(null)
     const [lastActionTime, setLastActionTime] = React.useState(null)
     const [showCamera, setShowCamera] = React.useState(false)
     const [capturedImage, setCapturedImage] = React.useState(null)
@@ -24,7 +25,42 @@ function EmployeeDashboard() {
     const videoRef = React.useRef(null)
     const canvasRef = React.useRef(null)
 
+    // Task Creation State
+    const [showTaskForm, setShowTaskForm] = React.useState(false);
+    const [isSubmittingTask, setIsSubmittingTask] = React.useState(false);
+    const [taskFormData, setTaskFormData] = React.useState({
+        title: '',
+        description: '',
+        assigned_to: '',
+        due_date: new Date().toISOString().split('T')[0],
+        expected_tat: ''
+    });
+
+    const handleCreateTask = async (e) => {
+        e.preventDefault();
+        setIsSubmittingTask(true);
+        try {
+            const success = await addTask({
+                ...taskFormData,
+                created_by: user?.name || user?.email || 'Unknown'
+            });
+            if (success) {
+                setShowTaskForm(false);
+                setTaskFormData({
+                    title: '',
+                    description: '',
+                    assigned_to: '',
+                    due_date: new Date().toISOString().split('T')[0],
+                    expected_tat: ''
+                });
+            }
+        } finally {
+            setIsSubmittingTask(false);
+        }
+    };
+
     // Fetch attendance on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     React.useEffect(() => {
         const today = new Date().toISOString().split('T')[0]
         fetchAttendance(today)
@@ -47,15 +83,14 @@ function EmployeeDashboard() {
         if (todayAttendance) {
             setStatus('checked-in')
             setLastActionTime(new Date(todayAttendance.clock_in).toLocaleTimeString())
-            setAttendanceId(todayAttendance.id)
         } else {
             console.log('No active session found, defaulting to checked-out');
             setStatus('checked-out')
-            setAttendanceId(null)
         }
     }, [attendance, user])
 
     // Auto-logout timer
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     React.useEffect(() => {
         const checkAutoLogout = () => {
             const now = new Date()
@@ -143,7 +178,6 @@ function EmployeeDashboard() {
                 if (res.success) {
                     setStatus('checked-in')
                     setLastActionTime(new Date(res.clock_in).toLocaleTimeString())
-                    setAttendanceId(res.id)
                 }
             } else {
                 const res = await clockOut(employeeId, capturedImage, location)
@@ -179,6 +213,19 @@ function EmployeeDashboard() {
     const conversionRate = myLeads.length > 0
         ? ((mySales.length / myLeads.length) * 100).toFixed(1)
         : 0
+
+    // Employee tasks
+    const myTasks = tasks.filter(t => t.assigned_to === user.email || t.assigned_to === user.name)
+
+    const handleTaskStatusToggle = async (taskId, currentStatus) => {
+        const statuses = ['Todo', 'In Progress', 'Done'];
+        const nextIdx = (statuses.indexOf(currentStatus) + 1) % statuses.length;
+        const nextStatus = statuses[nextIdx];
+        const task = tasks.find(t => t.id === taskId);
+        if (task) {
+            await updateTask(taskId, { ...task, status: nextStatus });
+        }
+    };
 
     return (
         <div className="space-y-8 animate-in fade-in duration-500">
@@ -314,30 +361,175 @@ function EmployeeDashboard() {
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                {/* My Active Leads List */}
-                <div className="lg:col-span-2 bg-white p-8 rounded-[2rem] border border-gray-50 shadow-sm">
-                    <h3 className="text-lg font-black text-gray-900 mb-6 flex items-center gap-2"><Phone size={20} className="text-gray-400" /> High Priority Follow-ups</h3>
-                    <div className="space-y-4">
-                        {myActiveLeads.slice(0, 5).map(lead => (
-                            <div key={lead.id} className="flex items-center justify-between p-4 bg-gray-50 rounded-2xl group hover:bg-white hover:shadow-sm transition-all border border-transparent hover:border-gray-100">
-                                <div className="flex items-center gap-4">
-                                    <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center font-bold text-gray-400 group-hover:text-vayu-green">{lead.name[0]}</div>
-                                    <div>
-                                        <p className="font-bold text-gray-900 text-sm">{lead.name}</p>
-                                        <p className="text-[10px] text-gray-400 font-bold uppercase tracking-tight flex items-center gap-1"><MapPin size={8} /> {lead.showroom}</p>
+                {/* Left Column: Follow-ups & Tasks */}
+                <div className="lg:col-span-2 space-y-8">
+                    {/* My Active Leads List */}
+                    <div className="bg-white p-8 rounded-[2rem] border border-gray-50 shadow-sm">
+                        <h3 className="text-lg font-black text-gray-900 mb-6 flex items-center gap-2"><Phone size={20} className="text-gray-400" /> High Priority Follow-ups</h3>
+                        <div className="space-y-4">
+                            {myActiveLeads.slice(0, 5).map(lead => (
+                                <div key={lead.id} className="flex items-center justify-between p-4 bg-gray-50 rounded-2xl group hover:bg-white hover:shadow-sm transition-all border border-transparent hover:border-gray-100">
+                                    <div className="flex items-center gap-4">
+                                        <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center font-bold text-gray-400 group-hover:text-vayu-green">{lead.name[0]}</div>
+                                        <div>
+                                            <p className="font-bold text-gray-900 text-sm">{lead.name}</p>
+                                            <p className="text-[10px] text-gray-400 font-bold uppercase tracking-tight flex items-center gap-1"><MapPin size={8} /> {lead.showroom}</p>
+                                        </div>
+                                    </div>
+                                    <div className="text-right">
+                                        <span className={`px-3 py-1 rounded-full text-[9px] font-black uppercase mb-1 inline-block ${lead.status === 'new' ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700'}`}>{lead.status}</span>
+                                        <p className="text-[9px] text-gray-400 font-bold">Call: {new Date(lead.next_call_date).toLocaleDateString()}</p>
                                     </div>
                                 </div>
-                                <div className="text-right">
-                                    <span className={`px-3 py-1 rounded-full text-[9px] font-black uppercase mb-1 inline-block ${lead.status === 'new' ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700'}`}>{lead.status}</span>
-                                    <p className="text-[9px] text-gray-400 font-bold">Call: {new Date(lead.next_call_date).toLocaleDateString()}</p>
+                            ))}
+                            {myActiveLeads.length === 0 && (
+                                <div className="text-center py-12 text-gray-400 text-sm italic">
+                                    No active leads assigned to you.
                                 </div>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* My Assigned Tasks */}
+                    <div className="bg-white p-8 rounded-[2rem] border border-gray-50 shadow-sm relative">
+                        <div className="flex justify-between items-center mb-6">
+                            <div className="flex items-center gap-3">
+                                <h3 className="text-lg font-black text-gray-900 flex items-center gap-2"><CheckSquare size={20} className="text-gray-400" /> My Assigned Tasks</h3>
+                                <span className="text-xs font-bold text-vayu-green bg-green-50 px-3 py-1 rounded-full border border-green-100">
+                                    {myTasks.filter(t => t.status !== 'Done').length} Active
+                                </span>
                             </div>
-                        ))}
-                        {myActiveLeads.length === 0 && (
-                            <div className="text-center py-12 text-gray-400 text-sm italic">
-                                No active leads assigned to you.
+                            <button
+                                onClick={() => setShowTaskForm(!showTaskForm)}
+                                className="bg-black text-white hover:bg-gray-800 text-xs px-3 py-1.5 rounded-xl font-bold flex items-center gap-1 transition-colors"
+                            >
+                                <Plus size={14} /> Assign Task
+                            </button>
+                        </div>
+
+                        {showTaskForm && (
+                            <div className="bg-gray-50 rounded-2xl p-5 mb-6 border border-gray-100 animate-in fade-in slide-in-from-top-4">
+                                <h4 className="font-bold text-sm mb-4">Create & Assign New Task</h4>
+                                <form onSubmit={handleCreateTask} className="grid grid-cols-2 gap-4">
+                                    <div className="col-span-2">
+                                        <label className="text-[10px] uppercase font-bold text-gray-500 mb-1 block">Task Title</label>
+                                        <input
+                                            type="text"
+                                            className="w-full bg-white border border-gray-200 rounded-xl p-2.5 text-xs font-bold"
+                                            value={taskFormData.title}
+                                            onChange={(e) => setTaskFormData({ ...taskFormData, title: e.target.value })}
+                                            required
+                                        />
+                                    </div>
+                                    <div className="col-span-2">
+                                        <label className="text-[10px] uppercase font-bold text-gray-500 mb-1 block">Description</label>
+                                        <textarea
+                                            className="w-full bg-white border border-gray-200 rounded-xl p-2.5 text-xs"
+                                            rows="2"
+                                            value={taskFormData.description}
+                                            onChange={(e) => setTaskFormData({ ...taskFormData, description: e.target.value })}
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="text-[10px] uppercase font-bold text-gray-500 mb-1 block">Assign To</label>
+                                        <select
+                                            className="w-full bg-white border border-gray-200 rounded-xl p-2.5 text-xs font-bold"
+                                            value={taskFormData.assigned_to}
+                                            onChange={(e) => setTaskFormData({ ...taskFormData, assigned_to: e.target.value })}
+                                            required
+                                        >
+                                            <option value="">Select Employee</option>
+                                            {accounts.map(acc => (
+                                                <option key={acc.email} value={acc.email}>{acc.name} ({acc.role})</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="text-[10px] uppercase font-bold text-gray-500 mb-1 block">Due Date</label>
+                                        <input
+                                            type="date"
+                                            className="w-full bg-white border border-gray-200 rounded-xl p-2.5 text-xs font-bold"
+                                            value={taskFormData.due_date}
+                                            onChange={(e) => setTaskFormData({ ...taskFormData, due_date: e.target.value })}
+                                            required
+                                        />
+                                    </div>
+                                    <div className="col-span-2">
+                                        <label className="text-[10px] uppercase font-bold text-gray-500 mb-1 block">Expected TAT</label>
+                                        <input
+                                            type="text"
+                                            placeholder="e.g. 48 Hours"
+                                            className="w-full bg-white border border-gray-200 rounded-xl p-2.5 text-xs font-bold"
+                                            value={taskFormData.expected_tat}
+                                            onChange={(e) => setTaskFormData({ ...taskFormData, expected_tat: e.target.value })}
+                                            required
+                                        />
+                                    </div>
+                                    <div className="col-span-2 pt-2 flex gap-3">
+                                        <button
+                                            type="submit"
+                                            disabled={isSubmittingTask}
+                                            className="flex-1 bg-vayu-green text-vayu-yellow hover:bg-emerald-900 transition-colors py-2 rounded-xl text-xs font-bold"
+                                        >
+                                            {isSubmittingTask ? 'Saving...' : 'Create Task'}
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowTaskForm(false)}
+                                            className="flex-1 bg-gray-200 text-gray-700 hover:bg-gray-300 transition-colors py-2 rounded-xl text-xs font-bold"
+                                        >
+                                            Cancel
+                                        </button>
+                                    </div>
+                                </form>
                             </div>
                         )}
+
+                        <div className="space-y-4">
+                            {myTasks.slice(0, 5).map(task => (
+                                <div key={task.id} className="p-4 bg-gray-50 rounded-2xl group hover:bg-white hover:shadow-sm transition-all border border-transparent hover:border-gray-100">
+                                    <div className="flex items-start justify-between gap-4">
+                                        <div className="flex items-start gap-3">
+                                            <button
+                                                onClick={() => handleTaskStatusToggle(task.id, task.status)}
+                                                className={`flex-shrink-0 mt-1 w-5 h-5 rounded flex items-center justify-center transition-colors ${task.status === 'Done' ? 'bg-green-100 text-green-600' :
+                                                    task.status === 'In Progress' ? 'bg-amber-100 text-amber-600' :
+                                                        'bg-gray-200 text-gray-400 hover:bg-gray-300'
+                                                    }`}
+                                            >
+                                                {task.status === 'Done' ? <CheckCircle size={12} /> :
+                                                    task.status === 'In Progress' ? <Clock size={12} /> :
+                                                        <div className="w-2 h-2 rounded-sm bg-gray-400"></div>}
+                                            </button>
+                                            <div>
+                                                <h4 className={`font-bold text-sm ${task.status === 'Done' ? 'text-gray-400 line-through' : 'text-gray-900'}`}>
+                                                    {task.title}
+                                                </h4>
+                                                {task.description && (
+                                                    <p className="text-xs text-gray-500 mt-1 line-clamp-1">{task.description}</p>
+                                                )}
+                                            </div>
+                                        </div>
+                                        <div className="text-right shrink-0">
+                                            <span className={`px-2 py-1 rounded-md text-[9px] font-black uppercase inline-block mb-1 ${task.status === 'Done' ? 'bg-green-100 text-green-700' :
+                                                task.status === 'In Progress' ? 'bg-amber-100 text-amber-700' :
+                                                    'bg-gray-200 text-gray-700'
+                                                }`}>
+                                                {task.status}
+                                            </span>
+                                            <div className="text-[9px] text-gray-400 font-bold flex items-center justify-end gap-1">
+                                                <Calendar size={10} /> {new Date(task.due_date).toLocaleDateString()}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                            {myTasks.length === 0 && (
+                                <div className="text-center py-12 text-gray-400 text-sm italic">
+                                    You have no assigned tasks.
+                                </div>
+                            )}
+                        </div>
                     </div>
                 </div>
 

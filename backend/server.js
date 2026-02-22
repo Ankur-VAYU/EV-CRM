@@ -62,6 +62,28 @@ db.exec(`
     role TEXT
   );
 
+  CREATE TABLE IF NOT EXISTS pending_sales (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    lead_id INTEGER,
+    sale_data TEXT,
+    status TEXT DEFAULT 'pending', -- pending, approved, rejected
+    submitted_by TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS tasks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT,
+    description TEXT,
+    assigned_to TEXT,
+    status TEXT DEFAULT 'Todo', -- Todo, In Progress, Done
+    due_date DATETIME,
+    expected_tat TEXT,
+    feedback TEXT,
+    created_by TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
   CREATE TABLE IF NOT EXISTS leads (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT,
@@ -437,6 +459,27 @@ const migrate = () => {
         const expCols = db.prepare('PRAGMA table_info(expenses)').all().map(c => c.name);
         if (!expCols.includes('cash_by_whom')) db.prepare('ALTER TABLE expenses ADD COLUMN cash_by_whom TEXT').run();
         if (!expCols.includes('upi_account')) db.prepare('ALTER TABLE expenses ADD COLUMN upi_account TEXT').run();
+
+        // Tasks Migrations
+        try {
+            const taskCols = db.prepare('PRAGMA table_info(tasks)').all().map(c => c.name);
+            if (!taskCols.includes('expected_tat')) db.prepare('ALTER TABLE tasks ADD COLUMN expected_tat TEXT').run();
+            if (!taskCols.includes('feedback')) db.prepare('ALTER TABLE tasks ADD COLUMN feedback TEXT').run();
+        } catch (e) {
+            console.error('Task Migration failed:', e);
+        }
+
+        // Notifications Table
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS notifications (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_email TEXT,
+            title TEXT,
+            message TEXT,
+            is_read BOOLEAN DEFAULT 0,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+          );
+        `);
 
         // Inventory Migrations
         const invCols = db.prepare('PRAGMA table_info(inventory)').all().map(c => c.name);
@@ -1858,7 +1901,154 @@ app.put('/api/employees/:id/status', (req, res) => {
     }
 });
 
+// Pending Sales API
+app.post('/api/pending-sales', (req, res) => {
+    const { lead_id, sale_data, submitted_by } = req.body;
+    try {
+        const stmt = db.prepare('INSERT INTO pending_sales (lead_id, sale_data, submitted_by) VALUES (?, ?, ?)');
+        const info = stmt.run(lead_id, JSON.stringify(sale_data), submitted_by);
+
+        // Update lead stage
+        db.prepare('UPDATE leads SET stage = ?, status = ? WHERE id = ?').run('Pending Approval', 'pending_approval', lead_id);
+
+        res.json({ id: info.lastInsertRowid, success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.get('/api/pending-sales', (req, res) => {
+    try {
+        const rows = db.prepare(`
+            SELECT ps.*, l.name as lead_name, l.phone as lead_phone 
+            FROM pending_sales ps 
+            LEFT JOIN leads l ON ps.lead_id = l.id 
+            WHERE ps.status = 'pending' 
+            ORDER BY ps.created_at DESC
+        `).all();
+        res.json(rows.map(r => ({ ...r, sale_data: JSON.parse(r.sale_data) })));
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/pending-sales/:id/approve', (req, res) => {
+    const { id } = req.params;
+    const { admin_name } = req.body;
+    try {
+        const pending = db.prepare('SELECT * FROM pending_sales WHERE id = ?').get(id);
+        if (!pending) return res.status(404).json({ error: 'Pending sale not found' });
+
+        db.prepare('UPDATE pending_sales SET status = ? WHERE id = ?').run('approved', id);
+
+        // Audit log
+        db.prepare('INSERT INTO audit_logs (action, target_id, performed_by) VALUES (?, ?, ?)').run('APPROVE_SALE', id, admin_name);
+
+        res.json({ success: true, pendingSale: { ...pending, sale_data: JSON.parse(pending.sale_data) } });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/pending-sales/:id/reject', (req, res) => {
+    const { id } = req.params;
+    const { admin_name } = req.body;
+    try {
+        const pending = db.prepare('SELECT * FROM pending_sales WHERE id = ?').get(id);
+        if (!pending) return res.status(404).json({ error: 'Pending sale not found' });
+
+        db.prepare('UPDATE pending_sales SET status = ? WHERE id = ?').run('rejected', id);
+        db.prepare('UPDATE leads SET stage = ?, status = ? WHERE id = ?').run('Price discussion', 'new', pending.lead_id);
+
+        db.prepare('INSERT INTO audit_logs (action, target_id, performed_by) VALUES (?, ?, ?)').run('REJECT_SALE', id, admin_name);
+
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Tasks API
+app.get('/api/tasks', (req, res) => {
+    try {
+        const rows = db.prepare('SELECT * FROM tasks ORDER BY created_at DESC').all();
+        res.json(rows);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/tasks', (req, res) => {
+    const { title, description, assigned_to, due_date, created_by, expected_tat } = req.body;
+    try {
+        const stmt = db.prepare('INSERT INTO tasks (title, description, assigned_to, due_date, expected_tat, created_by) VALUES (?, ?, ?, ?, ?, ?)');
+        const info = stmt.run(title, description, assigned_to, due_date, expected_tat, created_by);
+        res.json({ id: info.lastInsertRowid, ...req.body, status: 'Todo' });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.put('/api/tasks/:id', (req, res) => {
+    const { status, title, description, assigned_to, due_date, expected_tat, feedback } = req.body;
+    try {
+        const oldTask = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
+
+        db.prepare('UPDATE tasks SET status = ?, title = ?, description = ?, assigned_to = ?, due_date = ?, expected_tat = ?, feedback = ? WHERE id = ?')
+            .run(status, title, description, assigned_to, due_date, expected_tat, feedback, req.params.id);
+
+        // Notify creator if task is completed
+        if (oldTask && oldTask.status !== 'Done' && status === 'Done' && oldTask.created_by) {
+            db.prepare('INSERT INTO notifications (user_email, title, message) VALUES (?, ?, ?)')
+                .run(oldTask.created_by, 'Task Completed', `Task "${title}" assigned to ${assigned_to} has been marked as Done.`);
+        }
+
+        // Notify creator if task TAT/Due Date is extended
+        if (oldTask && oldTask.due_date && due_date && (new Date(due_date) > new Date(oldTask.due_date)) && oldTask.created_by) {
+            db.prepare('INSERT INTO notifications (user_email, title, message) VALUES (?, ?, ?)')
+                .run(oldTask.created_by, 'Task Deadline Extended', `Task "${title}" deadline was extended to ${due_date}.`);
+        } else if (oldTask && oldTask.expected_tat !== expected_tat && oldTask.created_by) {
+            db.prepare('INSERT INTO notifications (user_email, title, message) VALUES (?, ?, ?)')
+                .run(oldTask.created_by, 'Task TAT Updated', `Task "${title}" expected TaT was changed to ${expected_tat}.`);
+        }
+
+        const updatedTask = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
+        res.json(updatedTask || { success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.get('/api/notifications', (req, res) => {
+    const { email } = req.query;
+    try {
+        const rows = db.prepare('SELECT * FROM notifications WHERE user_email = ? ORDER BY created_at DESC LIMIT 100').all(email);
+        res.json(rows);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.put('/api/notifications/:id/read', (req, res) => {
+    try {
+        db.prepare('UPDATE notifications SET is_read = 1 WHERE id = ?').run(req.params.id);
+        res.json({ success: true });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.delete('/api/tasks/:id', (req, res) => {
+    try {
+        db.prepare('DELETE FROM tasks WHERE id = ?').run(req.params.id);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // Start server
 app.listen(port, () => {
     console.log(`VAYU Backend running at http://localhost:${port}`);
 });
+
